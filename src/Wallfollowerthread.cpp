@@ -38,8 +38,9 @@ float WallFollowerThread::Proporcional(float erro, float pGain)
 
 void WallFollowerThread::seguirParedeDSImples()
 {
-    float angulo;
-    angulo = Proporcional(200 - sonar[7], 0.05);
+    float angulo = Proporcional(200 - sonar[7], 0.05);
+    // Usa a variável angulo para evitar warning (pode ser usada no futuro)
+    (void)angulo;
 
     if (robo->robot.isHeadingDone() && robo->robot.isMoveDone())
     {

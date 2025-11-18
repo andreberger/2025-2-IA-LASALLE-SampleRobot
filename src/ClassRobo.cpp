@@ -158,7 +158,7 @@ void PioneerRobot::getWriteLaserReadings()
     fprintf(dataFile, "sim");
   else
     fprintf(dataFile, "nao");
-  fprintf(dataFile, "%f 2 \n", readings->size());
+  fprintf(dataFile, "%zu 2 \n", readings->size());
   for (it = readings->begin(); it != readings->end(); it++)
   {
     fprintf(dataFile, " %f %f\n", (*it).getX(), (*it).getY());
@@ -181,7 +181,7 @@ void PioneerRobot::getLaser()
     printf("sim");
   else
     printf("nao");
-  printf("%Readings size %zu 2 \n", readings->size());
+  printf("Readings size %zu 2 \n", readings->size());
   for (it = readings->begin(); it != readings->end(); it++)
   {
     printf(" %f %f\n", (*it).getX(), (*it).getY());
