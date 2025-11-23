@@ -177,16 +177,26 @@ std::vector<double> NeuralCollisionAvoidance::normalizeSensorData(const int* sen
     // Frente: sensores 3 e 4 (frente central)
     int frontSide = std::max(sensorValues[3], sensorValues[4]);
     
-    // Trás: não temos sensores traseiros, então usamos uma média dos laterais
-    // ou consideramos sempre livre se os laterais estiverem livres
-    int backSide = (leftSide + rightSide) / 2;
+    // Trás: não temos sensores traseiros, consideramos sempre livre (valor alto)
+    // Isso permite que o robô ande pra trás quando necessário
+    int backSide = 3000;  // Assume que trás está sempre livre
     
     // Normalizar: 1 = livre (> threshold), 0 = obstruído (<= threshold)
     std::vector<double> normalized(4);
     normalized[0] = (rightSide > NEAR_THRESHOLD) ? 1.0 : 0.0;  // Direita
     normalized[1] = (leftSide > NEAR_THRESHOLD) ? 1.0 : 0.0;   // Esquerda
     normalized[2] = (frontSide > NEAR_THRESHOLD) ? 1.0 : 0.0;  // Frente
-    normalized[3] = (backSide > NEAR_THRESHOLD) ? 1.0 : 0.0;   // Trás
+    normalized[3] = (backSide > NEAR_THRESHOLD) ? 1.0 : 0.0;   // Trás (sempre livre)
+    
+    // Log detalhado a cada 5 leituras para debug
+    static int logCounter = 0;
+    if (++logCounter % 5 == 0) {
+        std::cout << "\n[SENSORES] R:" << rightSide << " L:" << leftSide 
+                  << " F:" << frontSide << " B:" << backSide
+                  << " | Norm: [R:" << normalized[0] << " L:" << normalized[1] 
+                  << " F:" << normalized[2] << " B:" << normalized[3] << "]"
+                  << " | Threshold: " << NEAR_THRESHOLD << std::endl;
+    }
     
     return normalized;
 }
@@ -196,6 +206,62 @@ void NeuralCollisionAvoidance::executeAction(double networkOutput) {
     
     std::string actionName;
     
+    // Verificar parada de emergência primeiro
+    int frontMin = std::min(sonar[3], sonar[4]);
+    int frontMax = std::max(sonar[3], sonar[4]);
+    
+    // Log detalhado a cada 5 decisões para debug
+    if (decisionCount % 5 == 0) {
+        std::cout << "\n[DECISÃO #" << decisionCount << "] Output: " << networkOutput 
+                  << " | Front: " << frontMin << "/" << frontMax 
+                  << " | DangerThresh: " << DANGER_THRESHOLD 
+                  << " | NearThresh: " << NEAR_THRESHOLD << std::endl;
+    }
+    
+    // Se obstáculo MUITO próximo na frente (< 250mm), PARAR imediatamente
+    if (frontMin < DANGER_THRESHOLD) {
+        robo->robot.stop();
+        stopDecisions++;
+        actionName = "PARAR (EMERGÊNCIA)";
+        
+        std::cout << "🛑 PARADA DE EMERGÊNCIA! Front=" << frontMin 
+                  << " < Danger=" << DANGER_THRESHOLD << " (MUITO PERTO!)" << std::endl;
+        return;
+    }
+    
+    // Se obstáculo próximo mas não crítico (250-600mm), priorizar DESVIO ao invés de seguir em frente
+    if (frontMin < NEAR_THRESHOLD && frontMin >= DANGER_THRESHOLD) {
+        // Força desvio imediato - não espera rede neural decidir
+        int leftSpace = std::max({sonar[7], sonar[6], sonar[5]});
+        int rightSpace = std::max({sonar[0], sonar[1], sonar[2]});
+        
+        std::cout << "⚠️  OBSTÁCULO PRÓXIMO! Front=" << frontMin 
+                  << " (entre " << DANGER_THRESHOLD << " e " << NEAR_THRESHOLD 
+                  << ") | L=" << leftSpace << " R=" << rightSpace << std::endl;
+        
+        if (leftSpace > rightSpace && leftSpace > NEAR_THRESHOLD) {
+            if (robo->robot.isHeadingDone()) {
+                robo->Rotaciona(ROTATION_ANGLE, 1, VELOCITY_ROTATION);
+                leftDecisions++;
+                std::cout << "🔄 DESVIO FORÇADO ESQUERDA" << std::endl;
+            }
+            return;
+        } else if (rightSpace > NEAR_THRESHOLD) {
+            if (robo->robot.isHeadingDone()) {
+                robo->Rotaciona(ROTATION_ANGLE, 2, VELOCITY_ROTATION);
+                rightDecisions++;
+                std::cout << "🔄 DESVIO FORÇADO DIREITA" << std::endl;
+            }
+            return;
+        } else {
+            // Ambos os lados bloqueados, andar para trás
+            robo->Move(-VELOCITY_MOVE/2, -VELOCITY_MOVE/2);
+            backwardDecisions++;
+            std::cout << "⬇️  ANDANDO PARA TRÁS (lados bloqueados)" << std::endl;
+            return;
+        }
+    }
+    
     // Interpretar saída da rede e executar ação correspondente
     if (networkOutput >= ACTION_RIGHT_MIN && networkOutput < ACTION_RIGHT_MAX) {
         // VIRAR DIREITA
@@ -203,6 +269,9 @@ void NeuralCollisionAvoidance::executeAction(double networkOutput) {
             robo->Rotaciona(ROTATION_ANGLE, 2, VELOCITY_ROTATION);
             rightDecisions++;
             actionName = "DIREITA";
+            if (decisionCount % 5 == 0) {
+                std::cout << "➡️  VIRANDO DIREITA" << std::endl;
+            }
         } else {
             actionName = "AGUARDANDO ROTAÇÃO";
         }
@@ -213,16 +282,42 @@ void NeuralCollisionAvoidance::executeAction(double networkOutput) {
             robo->Rotaciona(ROTATION_ANGLE, 1, VELOCITY_ROTATION);
             leftDecisions++;
             actionName = "ESQUERDA";
+            if (decisionCount % 5 == 0) {
+                std::cout << "⬅️  VIRANDO ESQUERDA" << std::endl;
+            }
         } else {
             actionName = "AGUARDANDO ROTAÇÃO";
         }
     }
     else if (networkOutput >= ACTION_FORWARD_MIN && networkOutput < ACTION_FORWARD_MAX) {
-        // SEGUIR EM FRENTE
-        if (robo->robot.isHeadingDone()) {
+        // SEGUIR EM FRENTE (mas só se caminho estiver livre)
+        if (frontMin > NEAR_THRESHOLD && robo->robot.isHeadingDone()) {
             robo->Move(VELOCITY_MOVE, VELOCITY_MOVE);
             forwardDecisions++;
             actionName = "FRENTE";
+            if (decisionCount % 5 == 0) {
+                std::cout << "⬆️  SEGUINDO EM FRENTE (Front=" << frontMin << " > " << NEAR_THRESHOLD << ")" << std::endl;
+            }
+        } else if (frontMin <= NEAR_THRESHOLD) {
+            // Se a rede mandou ir pra frente mas está bloqueado, DESVIAR!
+            // Escolhe o lado com mais espaço
+            int leftSpace = std::max({sonar[7], sonar[6], sonar[5]});
+            int rightSpace = std::max({sonar[0], sonar[1], sonar[2]});
+            
+            std::cout << "🚧 FRENTE BLOQUEADA! Front=" << frontMin << " <= " << NEAR_THRESHOLD 
+                      << " | L=" << leftSpace << " R=" << rightSpace << std::endl;
+            
+            if (leftSpace > rightSpace) {
+                robo->Rotaciona(ROTATION_ANGLE, 1, VELOCITY_ROTATION);  // Esquerda
+                leftDecisions++;
+                actionName = "ESQUERDA (desvio inteligente)";
+                std::cout << "🔄 DESVIANDO ESQUERDA (mais espaço)" << std::endl;
+            } else {
+                robo->Rotaciona(ROTATION_ANGLE, 2, VELOCITY_ROTATION);  // Direita
+                rightDecisions++;
+                actionName = "DIREITA (desvio inteligente)";
+                std::cout << "🔄 DESVIANDO DIREITA (mais espaço)" << std::endl;
+            }
         } else {
             actionName = "AGUARDANDO ROTAÇÃO";
         }
@@ -230,7 +325,7 @@ void NeuralCollisionAvoidance::executeAction(double networkOutput) {
     else if (networkOutput >= ACTION_BACKWARD_MIN && networkOutput < ACTION_BACKWARD_MAX) {
         // MOVER PARA TRÁS
         if (robo->robot.isHeadingDone()) {
-            robo->Move(-VELOCITY_MOVE, -VELOCITY_MOVE);
+            robo->Move(-VELOCITY_MOVE/2, -VELOCITY_MOVE/2);  // Metade da velocidade pra trás
             backwardDecisions++;
             actionName = "TRÁS";
         } else {

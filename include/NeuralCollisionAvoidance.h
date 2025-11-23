@@ -37,9 +37,10 @@ private:
     // Dados dos sensores
     int sonar[8];
     
-    // Thresholds para normalização dos sensores
-    static constexpr double NEAR_THRESHOLD = 20.0;  // Obstáculo próximo
-    static constexpr double FAR_THRESHOLD = 100.0;  // Obstáculo distante
+    // Thresholds para normalização dos sensores (valores em mm)
+    static constexpr double NEAR_THRESHOLD = 600.0;    // Obstáculo próximo - abaixo disso considera bloqueado
+    static constexpr double DANGER_THRESHOLD = 250.0;  // Obstáculo MUITO próximo - parada de emergência (reduzido)
+    static constexpr double FAR_THRESHOLD = 1500.0;    // Obstáculo distante
     
     // Intervalos de ação baseados na saída da rede
     static constexpr double ACTION_RIGHT_MIN = 0.50;
@@ -54,9 +55,9 @@ private:
     static constexpr double ACTION_STOP_MAX = 0.80;
     
     // Velocidades de movimento
-    static constexpr int VELOCITY_MOVE = 200;
-    static constexpr int VELOCITY_ROTATION = 50;
-    static constexpr int ROTATION_ANGLE = 30;
+    static constexpr int VELOCITY_MOVE = 150;         // Velocidade reduzida para melhor controle
+    static constexpr int VELOCITY_ROTATION = 40;      // Velocidade de rotação
+    static constexpr int ROTATION_ANGLE = 45;          // Ângulo de rotação aumentado
     
     // Estatísticas e logging
     int decisionCount;
